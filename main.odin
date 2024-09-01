@@ -2,6 +2,60 @@ package game
 
 import rl "vendor:raylib"
 
+Animation_Name :: enum {
+    Idle,
+    Run
+}
+
+Animation :: struct {
+    texture: rl.Texture2D,
+    num_frames: int,
+    frame_timer: f32,
+    current_frame: int,
+    frame_length: f32,
+    name: Animation_Name
+}
+
+update_animation :: proc(a: ^Animation) {
+    a.frame_timer += rl.GetFrameTime()
+
+    if a.frame_timer > a.frame_length {
+        a.current_frame += 1
+        a.frame_timer = 0
+
+        if a.current_frame == a.num_frames {
+            a.current_frame = 0
+        }
+    }
+}
+
+draw_animation :: proc(a: Animation, pos: rl.Vector2, flip: bool) {
+    width := f32(a.texture.width)
+    height := f32(a.texture.height)
+
+    source := rl.Rectangle {
+        x = f32(a.current_frame) * width  / f32(a.num_frames),
+        y = 0,
+        width = width / f32(a.num_frames),
+        height = height,
+    }
+
+    if flip do source.width = -source.width
+
+    dest := rl.Rectangle {
+        x = pos.x,
+        y = pos.y,
+        width = width * 4 / f32(a.num_frames),
+        height = height * 4,
+    }
+
+    rl.DrawTexturePro(a.texture,
+                      source,
+                      dest,
+                      0, 0,
+                      rl.WHITE)
+}
+
 main :: proc() {
     rl.InitWindow(1280, 720, "Odin + Raylib")
 
@@ -9,11 +63,22 @@ main :: proc() {
     player_vel: rl.Vector2
     player_grounded: bool
     player_flip: bool
-    player_run_texture := rl.LoadTexture("cat_run.png")
-    player_run_num_frames := 4
-    player_run_frame_timer: f32
-    player_run_current_frame: int
-    player_run_frame_length := f32(0.1)
+
+    player_run := Animation {
+        texture = rl.LoadTexture("cat_run.png"),
+        num_frames = 4,
+        frame_length = 0.1,
+        name = .Run
+    }
+
+    player_idle := Animation {
+        texture = rl.LoadTexture("cat_idle.png"),
+        num_frames = 2,
+        frame_length = 0.5,
+        name = .Idle
+    }
+
+    current_animation := player_idle
 
     for !rl.WindowShouldClose() {
         rl.BeginDrawing()
@@ -22,11 +87,23 @@ main :: proc() {
         if rl.IsKeyDown(.LEFT) {
             player_vel.x = -400
             player_flip = true
+
+            if current_animation.name != .Run {
+                current_animation = player_run
+            }
         } else if rl.IsKeyDown(.RIGHT) {
             player_vel.x = 400
             player_flip = false
+
+            if current_animation.name != .Run {
+                current_animation = player_run
+            }
         } else {
             player_vel.x = 0
+
+            if current_animation.name != .Idle {
+                current_animation = player_idle
+            }
         }
 
         player_vel.y += 2000 * rl.GetFrameTime()
@@ -43,43 +120,8 @@ main :: proc() {
             player_grounded = true
         }
 
-        player_run_width := f32(player_run_texture.width)
-        player_run_height := f32(player_run_texture.height)
-
-        player_run_frame_timer += rl.GetFrameTime()
-
-        if player_run_frame_timer > player_run_frame_length {
-            player_run_current_frame += 1
-            player_run_frame_timer = 0
-
-            if player_run_current_frame == player_run_num_frames {
-                player_run_current_frame = 0
-            }
-        }
-
-        draw_player_source := rl.Rectangle {
-            x = f32(player_run_current_frame) * player_run_width  / f32(player_run_num_frames),
-            y = 0,
-            width = player_run_width / f32(player_run_num_frames),
-            height = player_run_height,
-        }
-
-        if player_flip {
-            draw_player_source.width = -draw_player_source.width
-        }
-
-        draw_player_dest := rl.Rectangle {
-            x = player_pos.x,
-            y = player_pos.y,
-            width = player_run_width * 4 / f32(player_run_num_frames),
-            height = player_run_height * 4,
-        }
-
-        rl.DrawTexturePro(player_run_texture,
-                          draw_player_source,
-                          draw_player_dest,
-                          0, 0,
-                          rl.WHITE)
+        update_animation(&current_animation)
+        draw_animation(current_animation, player_pos, player_flip)
 
         rl.EndDrawing()
     }
