@@ -1,10 +1,14 @@
 package game
 
+import "core:fmt"
+import "core:mem"
+import "core:encoding/json"
+import "core:os"
 import rl "vendor:raylib"
 
 Animation_Name :: enum {
     Idle,
-    Run
+    Run,
 }
 
 Animation :: struct {
@@ -13,7 +17,11 @@ Animation :: struct {
     frame_timer: f32,
     current_frame: int,
     frame_length: f32,
-    name: Animation_Name
+    name: Animation_Name,
+}
+
+Level :: struct {
+    platforms: [dynamic]rl.Vector2,
 }
 
 update_animation :: proc(a: ^Animation) {
@@ -57,9 +65,32 @@ draw_animation :: proc(a: Animation, pos: rl.Vector2, flip: bool) {
                       rl.WHITE)
 }
 
+platform_collider :: proc(pos: rl.Vector2) -> rl.Rectangle {
+    return {
+        pos.x, pos.y,
+        96, 16,
+    }
+}
+
 PixelWindowHeight :: 180
 
 main :: proc() {
+    tracker: mem.Tracking_Allocator
+    mem.tracking_allocator_init(&tracker, context.allocator)
+    context.allocator = mem.tracking_allocator(&tracker)
+
+    defer {
+        for _, entry in tracker.allocation_map {
+            fmt.eprintf("%v leaked %v bytes\n", entry.location, entry.size)
+        }
+
+        for entry in tracker.bad_free_array {
+            fmt.eprintf("%v bad free\n", entry.location)
+        }
+
+        mem.tracking_allocator_destroy(&tracker)
+    }
+
     rl.InitWindow(960, 540, "Odin + Raylib")
     rl.SetWindowPosition(900, 100)
     rl.SetWindowState({.WINDOW_RESIZABLE})
@@ -86,13 +117,17 @@ main :: proc() {
 
     current_animation := player_idle
 
-    platforms := []rl.Rectangle {
-        { -20, 20, 96, 16 },
-        { 90, -10, 96, 16 },
-        { 90, -50, 96, 16 },
+    level: Level
+    if level_data, ok := os.read_entire_file("level.json", context.temp_allocator); ok {
+        if json.unmarshal(level_data, &level) != nil {
+            append(&level.platforms, rl.Vector2 {-20, 20})
+        }
+    } else {
+        append(&level.platforms, rl.Vector2 {-20, 20})
     }
 
     platform_texture := rl.LoadTexture("platform.png")
+    editing := false
 
     for !rl.WindowShouldClose() {
         rl.BeginDrawing()
@@ -137,8 +172,8 @@ main :: proc() {
 
         player_grounded = false
 
-        for platform in platforms {
-            if rl.CheckCollisionRecs(player_feet_collider, platform) && player_vel.y > 0 {
+        for platform in level.platforms {
+            if rl.CheckCollisionRecs(player_feet_collider, platform_collider(platform)) && player_vel.y > 0 {
                 player_vel.y = 0
                 player_pos.y = platform.y
                 player_grounded = true
@@ -158,15 +193,46 @@ main :: proc() {
         rl.BeginMode2D(camera)
         draw_animation(current_animation, player_pos, player_flip)
 
-        for platform in platforms {
-            rl.DrawTextureV(platform_texture, {platform.x, platform.y}, rl.WHITE)
+        for platform in level.platforms {
+            rl.DrawTextureV(platform_texture, platform, rl.WHITE)
+        }
+        //rl.DrawRectangleRec(player_feet_collider, {0, 255, 0, 100})
+
+        if rl.IsKeyPressed(.F2) {
+            editing = !editing
         }
 
-        //rl.DrawRectangleRec(player_feet_collider, {0, 255, 0, 100})
-        rl.EndMode2D()
+        if editing {
+            mp := rl.GetScreenToWorld2D(rl.GetMousePosition(), camera)
 
+            rl.DrawTextureV(platform_texture, mp, rl.WHITE)
+
+            if rl.IsMouseButtonPressed(.LEFT) {
+                append(&level.platforms, mp)
+            }
+
+            if rl.IsMouseButtonPressed(.RIGHT) {
+                for p, i in level.platforms {
+                    if rl.CheckCollisionPointRec(mp, platform_collider(p)) {
+                        unordered_remove(&level.platforms, i)
+                        break
+                    }
+                }
+            }
+        }
+
+        rl.EndMode2D()
         rl.EndDrawing()
+
+        free_all(context.temp_allocator)
     }
 
     rl.CloseWindow()
+
+    if level_data, err := json.marshal(level, allocator = context.temp_allocator); err == nil {
+        os.write_entire_file("level.json", level_data)
+    }
+
+    free_all(context.temp_allocator)
+    delete(level.platforms)
 }
